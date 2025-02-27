@@ -10,36 +10,14 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
-const services = [
-  { id: 'coupe-brushing', name: 'Coupe & Brushing', price: '45€', duration: '1h' },
-  { id: 'coloration', name: 'Coloration', price: '60€', duration: '1h30' },
-  { id: 'balayage', name: 'Balayage', price: '80€', duration: '2h' },
-  { id: 'coiffure-evenement', name: 'Coiffure Événementielle', price: 'Sur devis', duration: 'Variable' },
-  { id: 'coupe-homme', name: 'Coupe Homme', price: '30€', duration: '45min' },
-  { id: 'coupe-enfant', name: 'Coupe Enfant', price: '25€', duration: '30min' },
-];
+interface Service {
+  id: string;
+  name: string;
+  price: string;
+  duration: string;
+}
 
-const timeSlots = [
-  '09:00', '10:00', '11:00', '12:00', '14:00', '15:00', '16:00', '17:00', '18:00'
-];
-
-// Générer des dates pour les 14 prochains jours
-const generateDates = () => {
-  const dates = [];
-  const today = new Date();
-  
-  for (let i = 1; i <= 14; i++) {
-    const date = new Date(today);
-    date.setDate(today.getDate() + i);
-    dates.push(date);
-  }
-  
-  return dates;
-};
-
-const availableDates = generateDates();
-
-function BookingPage() {
+const Booking: React.FC = () => {
   const [step, setStep] = useState(1);
   const [selectedService, setSelectedService] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
@@ -52,6 +30,35 @@ function BookingPage() {
     message: ''
   });
   const [isSubmitted, setIsSubmitted] = useState(false);
+
+  const services: Service[] = [
+    { id: 'coupe-brushing', name: 'Coupe & Brushing', price: '45€', duration: '1h' },
+    { id: 'coloration', name: 'Coloration', price: '60€', duration: '1h30' },
+    { id: 'balayage', name: 'Balayage', price: '80€', duration: '2h' },
+    { id: 'coiffure-evenement', name: 'Coiffure Événementielle', price: 'Sur devis', duration: 'Variable' },
+    { id: 'coupe-homme', name: 'Coupe Homme', price: '30€', duration: '45min' },
+    { id: 'coupe-enfant', name: 'Coupe Enfant', price: '25€', duration: '30min' },
+  ];
+
+  const timeSlots = [
+    '09:00', '10:00', '11:00', '12:00', '14:00', '15:00', '16:00', '17:00', '18:00'
+  ];
+
+  // Générer des dates pour les 14 prochains jours
+  const generateDates = () => {
+    const dates = [];
+    const today = new Date();
+    
+    for (let i = 1; i <= 14; i++) {
+      const date = new Date(today);
+      date.setDate(today.getDate() + i);
+      dates.push(date);
+    }
+    
+    return dates;
+  };
+
+  const availableDates = generateDates();
 
   const handleServiceSelect = (serviceId: string) => {
     setSelectedService(serviceId);
@@ -446,15 +453,8 @@ function BookingPage() {
           </div>
         </div>
       </section>
-
-      {/* Footer */}
-      <footer className="bg-gray-900 text-white py-8">
-        <div className="container mx-auto px-6 text-center">
-          <p>© 2024 Coiffure à Domicile - Tous droits réservés</p>
-        </div>
-      </footer>
     </div>
   );
-}
+};
 
-export default BookingPage;
+export default Booking;
