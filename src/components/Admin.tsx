@@ -1,3 +1,6 @@
+// Cette solution combine toutes les corrections précédentes
+// Remplacez le contenu de votre fichier Admin.tsx par ce code mis à jour
+
 import React, { useState, useEffect } from 'react';
 import {
   Calendar,
@@ -50,6 +53,11 @@ const Admin: React.FC = () => {
   useEffect(() => {
     if (currentUser) {
       fetchBookingsForMonth();
+
+      // Réinitialiser les sélections
+      setSelectedDayBookings(null);
+      setSelectedDayDate(null);
+      setSelectedBooking(null);
     }
   }, [currentUser]);
 
@@ -84,11 +92,13 @@ const Admin: React.FC = () => {
     setError(null);
 
     try {
-      console.log('Fetching bookings for month:', currentDate.getMonth() + 1);
+      console.log('Fetching bookings for month:', currentDate.getMonth() + 1, currentDate.getFullYear());
 
       // Create a date range for the current month
       const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
       const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0, 23, 59, 59);
+
+      console.log('Date range:', startOfMonth.toISOString(), 'to', endOfMonth.toISOString());
 
       // Approach 1: Get all bookings at once instead of day by day
       // This requires a composite index on date
@@ -103,6 +113,8 @@ const Admin: React.FC = () => {
       console.log('Found', querySnapshot.docs.length, 'bookings');
 
       const monthBookings: BookingWithId[] = querySnapshot.docs.map(mapBookingData);
+
+      // Suite du fichier Admin.tsx
 
       console.log('Processed bookings:', monthBookings);
       setBookings(monthBookings);
@@ -191,20 +203,20 @@ const Admin: React.FC = () => {
     setIsLoading(true);
     setError(null);
     setSuccessMessage(null);
-  
+
     try {
       await bookingService.updateBookingStatus(bookingId, newStatus);
-  
+
       // Update the local state
       setBookings(prev =>
         prev.map(booking =>
           booking.id === bookingId ? { ...booking, status: newStatus } : booking
         )
       );
-      
+
       // Récupérer les détails de la réservation
       const booking = bookings.find(b => b.id === bookingId);
-      
+
       if (booking) {
         // Si le statut est "confirmed", envoyez un email de confirmation
         if (newStatus === 'confirmed') {
@@ -215,7 +227,7 @@ const Admin: React.FC = () => {
           } else {
             setSuccessMessage(`La réservation a été confirmée, mais l'envoi de l'email a échoué.`);
           }
-        } 
+        }
         // Si le statut est "cancelled", envoyez un email d'annulation
         else if (newStatus === 'cancelled') {
           // Envoyer l'email d'annulation
@@ -226,19 +238,26 @@ const Admin: React.FC = () => {
             setSuccessMessage(`La réservation a été annulée, mais l'envoi de l'email a échoué.`);
           }
         } else {
-          setSuccessMessage(`La réservation a été ${
-            newStatus === 'completed' ? 'marquée comme terminée' : 'mise à jour'
-          } avec succès.`);
+          setSuccessMessage(`La réservation a été ${newStatus === 'completed' ? 'marquée comme terminée' : 'mise à jour'
+            } avec succès.`);
         }
       } else {
         setSuccessMessage(`La réservation a été mise à jour avec succès.`);
       }
-  
+
       // If we're viewing details, update the selected booking
       if (selectedBooking && selectedBooking.id === bookingId) {
         setSelectedBooking({ ...selectedBooking, status: newStatus });
       }
-  
+
+      // If we're viewing day details, update the bookings for that day
+      if (selectedDayBookings && selectedDayDate) {
+        const updatedDayBookings = selectedDayBookings.map(booking =>
+          booking.id === bookingId ? { ...booking, status: newStatus } : booking
+        );
+        setSelectedDayBookings(updatedDayBookings);
+      }
+
     } catch (err) {
       console.error('Error updating booking status:', err);
       setError('Impossible de mettre à jour la réservation. Veuillez réessayer.');
@@ -248,6 +267,7 @@ const Admin: React.FC = () => {
   };
 
   const openDayDetails = (date: Date) => {
+    console.log("Opening day details for:", date.toISOString().split('T')[0]);
     const dayBookings = getBookingsForDay(date);
     const sortedBookings = sortBookingsByTime(dayBookings);
     setSelectedDayBookings(sortedBookings);
@@ -260,6 +280,7 @@ const Admin: React.FC = () => {
   };
 
   const openBookingDetails = (booking: BookingWithId) => {
+    console.log("Opening booking details for:", booking.id);
     setSelectedBooking(booking);
   };
 
@@ -301,13 +322,21 @@ const Admin: React.FC = () => {
 
   // Get bookings for a specific day
   const getBookingsForDay = (date: Date) => {
+    // S'assurer que la date est correctement traitée
+    if (!date) return [];
+
+    console.log("Looking for bookings on date:", date.toISOString().split('T')[0]);
+
     return bookings.filter(booking => {
+      if (!booking.date) return false;
+
       const bookingDate = new Date(booking.date);
-      return (
+      const isSameDay =
         bookingDate.getFullYear() === date.getFullYear() &&
         bookingDate.getMonth() === date.getMonth() &&
-        bookingDate.getDate() === date.getDate()
-      );
+        bookingDate.getDate() === date.getDate();
+
+      return isSameDay;
     });
   };
 
@@ -385,88 +414,7 @@ const Admin: React.FC = () => {
   // Render login form
   if (!currentUser) {
     return (
-
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        {selectedDayBookings && selectedDayDate && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
-              <div className="p-6">
-                <div className="flex justify-between items-start mb-6">
-                  <h3 className="text-xl font-semibold">
-                    Rendez-vous du {formatDate(selectedDayDate)}
-                  </h3>
-                  <button
-                    onClick={closeDayDetails}
-                    className="text-gray-400 hover:text-gray-500"
-                  >
-                    <X className="w-6 h-6" />
-                  </button>
-                </div>
-
-                {selectedDayBookings.length === 0 ? (
-                  <div className="text-center py-8">
-                    <p className="text-gray-500">Aucune réservation pour cette journée.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {selectedDayBookings.map(booking => (
-                      <div
-                        key={booking.id}
-                        className="border rounded-lg overflow-hidden bg-white hover:shadow-md transition-shadow"
-                      >
-                        <div className="flex justify-between items-center p-4 border-b">
-                          <div className="flex items-center">
-                            <div className="mr-4">
-                              <div className="text-lg font-semibold">{booking.time}</div>
-                              <div className={`text-sm px-2 py-0.5 rounded-full inline-block ${getStatusClass(booking.status)}`}>
-                                {getStatusLabel(booking.status)}
-                              </div>
-                            </div>
-                            <div>
-                              <div className="font-medium">{booking.name}</div>
-                              <div className="text-sm text-gray-600">{getServiceName(booking.service)}</div>
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => openBookingDetails(booking)}
-                            className="px-3 py-1 bg-silver-500 text-white rounded-lg hover:bg-silver-600 text-sm"
-                          >
-                            Détails
-                          </button>
-                        </div>
-
-                        <div className="p-4 bg-gray-50 text-sm grid grid-cols-1 md:grid-cols-2 gap-3">
-                          <div>
-                            <div className="flex items-center">
-                              <Phone className="w-4 h-4 text-gray-400 mr-2" />
-                              <a href={`tel:${booking.phone}`} className="hover:text-silver-600">
-                                {booking.phone}
-                              </a>
-                            </div>
-                          </div>
-                          <div>
-                            <div className="flex items-center">
-                              <Mail className="w-4 h-4 text-gray-400 mr-2" />
-                              <a href={`mailto:${booking.email}`} className="hover:text-silver-600">
-                                {booking.email}
-                              </a>
-                            </div>
-                          </div>
-                          <div className="md:col-span-2">
-                            <div className="flex items-center">
-                              <MapPin className="w-4 h-4 text-gray-400 mr-2" />
-                              <span className="truncate">{booking.address}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
         <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-xl shadow-lg">
           <div className="text-center">
             <h2 className="mt-6 text-3xl font-extrabold text-gray-900">Espace Administration</h2>
@@ -649,7 +597,8 @@ const Admin: React.FC = () => {
               return (
                 <div
                   key={`day-${date.getDate()}`}
-                  className={`bg-white p-2 h-32 overflow-y-auto relative group ${isCurrentDay ? 'bg-blue-50' : ''}`}
+                  className={`bg-white p-2 h-32 overflow-y-auto relative ${isCurrentDay ? 'bg-blue-50' : ''} ${hasBookings ? 'cursor-pointer' : ''}`}
+                  onClick={() => hasBookings ? openDayDetails(date) : null}
                 >
                   <div className={`text-right font-medium mb-2 ${isCurrentDay ? 'text-blue-600' : ''}`}>
                     {date.toLocaleDateString('fr-FR', dayFormat)}
@@ -660,19 +609,25 @@ const Admin: React.FC = () => {
                     ) : (
                       <>
                         {sortedBookings.slice(0, 2).map(booking => (
-                          <button
+                          <div
                             key={booking.id}
-                            onClick={() => openBookingDetails(booking)}
-                            className={`block w-full text-left px-2 py-1 rounded text-xs ${getStatusClass(booking.status)}`}
+                            onClick={(e) => {
+                              e.stopPropagation(); // Empêche le déclenchement du onClick du parent
+                              openBookingDetails(booking);
+                            }}
+                            className={`block w-full text-left px-2 py-1 rounded text-xs ${getStatusClass(booking.status)} cursor-pointer hover:brightness-95`}
                           >
                             <div className="font-medium">{booking.time}</div>
                             <div className="truncate">{booking.name}</div>
                             <div className="truncate text-xs">{getServiceName(booking.service)}</div>
-                          </button>
+                          </div>
                         ))}
                         {sortedBookings.length > 2 && (
                           <button
-                            onClick={() => openDayDetails(date)}
+                            onClick={(e) => {
+                              e.stopPropagation(); // Empêche le déclenchement du onClick du parent
+                              openDayDetails(date);
+                            }}
                             className="block w-full text-center text-xs py-1 bg-gray-100 hover:bg-gray-200 rounded text-gray-600"
                           >
                             +{sortedBookings.length - 2} autres
@@ -681,19 +636,93 @@ const Admin: React.FC = () => {
                       </>
                     )}
                   </div>
-
-                  {/* Overlay pour rendre le jour entier cliquable seulement s'il y a des réservations */}
-                  {hasBookings && (
-                    <div
-                      onClick={() => openDayDetails(date)}
-                      className="absolute inset-0 cursor-pointer opacity-0 group-hover:opacity-20 bg-silver-500 transition-opacity"
-                    ></div>
-                  )}
                 </div>
               );
             })}
           </div>
         </div>
+
+        {/* Day details modal */}
+        {selectedDayBookings && selectedDayDate && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+              <div className="p-6">
+                <div className="flex justify-between items-start mb-6">
+                  <h3 className="text-xl font-semibold">
+                    Rendez-vous du {formatDate(selectedDayDate)}
+                  </h3>
+                  <button
+                    onClick={closeDayDetails}
+                    className="text-gray-400 hover:text-gray-500 focus:outline-none"
+                  >
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+
+                {selectedDayBookings.length === 0 ? (
+                  <div className="text-center py-8">
+                    <p className="text-gray-500">Aucune réservation pour cette journée.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {selectedDayBookings.map(booking => (
+                      <div
+                        key={booking.id}
+                        className="border rounded-lg overflow-hidden bg-white hover:shadow-md transition-shadow"
+                      >
+                        <div className="flex justify-between items-center p-4 border-b">
+                          <div className="flex items-center">
+                            <div className="mr-4">
+                              <div className="text-lg font-semibold">{booking.time}</div>
+                              <div className={`text-sm px-2 py-0.5 rounded-full inline-block ${getStatusClass(booking.status)}`}>
+                                {getStatusLabel(booking.status)}
+                              </div>
+                            </div>
+                            <div>
+                              <div className="font-medium">{booking.name}</div>
+                              <div className="text-sm text-gray-600">{getServiceName(booking.service)}</div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => openBookingDetails(booking)}
+                            className="px-3 py-1 bg-silver-500 text-white rounded-lg hover:bg-silver-600 text-sm"
+                          >
+                            Détails
+                          </button>
+                        </div>
+
+                        <div className="p-4 bg-gray-50 text-sm grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                            <div className="flex items-center">
+                              <Phone className="w-4 h-4 text-gray-400 mr-2" />
+                              <a href={`tel:${booking.phone}`} className="hover:text-silver-600">
+                                {booking.phone}
+                              </a>
+                            </div>
+                          </div>
+                          <div>
+                            <div className="flex items-center">
+                              <Mail className="w-4 h-4 text-gray-400 mr-2" />
+                              <a href={`mailto:${booking.email}`} className="hover:text-silver-600">
+                                {booking.email}
+                              </a>
+                            </div>
+                          </div>
+                          <div className="md:col-span-2">
+                            <div className="flex items-center">
+                              <MapPin className="w-4 h-4 text-gray-400 mr-2" />
+                              <span className="truncate">{booking.address}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Booking details modal */}
         {selectedBooking && (
@@ -704,7 +733,7 @@ const Admin: React.FC = () => {
                   <h3 className="text-xl font-semibold">Détails de la réservation</h3>
                   <button
                     onClick={closeBookingDetails}
-                    className="text-gray-400 hover:text-gray-500"
+                    className="text-gray-400 hover:text-gray-500 focus:outline-none"
                   >
                     <X className="w-6 h-6" />
                   </button>
@@ -793,7 +822,7 @@ const Admin: React.FC = () => {
                       <>
                         <button
                           onClick={() => updateBookingStatus(selectedBooking.id, 'confirmed')}
-                          className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 flex items-center"
+                          className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 flex items-center focus:outline-none"
                           disabled={isLoading}
                         >
                           <Check className="w-4 h-4 mr-1" />
@@ -801,7 +830,7 @@ const Admin: React.FC = () => {
                         </button>
                         <button
                           onClick={() => updateBookingStatus(selectedBooking.id, 'cancelled')}
-                          className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 flex items-center"
+                          className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 flex items-center focus:outline-none"
                           disabled={isLoading}
                         >
                           <X className="w-4 h-4 mr-1" />
@@ -814,7 +843,7 @@ const Admin: React.FC = () => {
                       <>
                         <button
                           onClick={() => updateBookingStatus(selectedBooking.id, 'completed')}
-                          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center"
+                          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center focus:outline-none"
                           disabled={isLoading}
                         >
                           <Check className="w-4 h-4 mr-1" />
@@ -822,7 +851,7 @@ const Admin: React.FC = () => {
                         </button>
                         <button
                           onClick={() => updateBookingStatus(selectedBooking.id, 'cancelled')}
-                          className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 flex items-center"
+                          className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 flex items-center focus:outline-none"
                           disabled={isLoading}
                         >
                           <X className="w-4 h-4 mr-1" />
@@ -834,7 +863,7 @@ const Admin: React.FC = () => {
                     {(selectedBooking.status === 'cancelled' || selectedBooking.status === 'completed') && (
                       <button
                         onClick={() => updateBookingStatus(selectedBooking.id, 'confirmed')}
-                        className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 flex items-center"
+                        className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 flex items-center focus:outline-none"
                         disabled={isLoading}
                       >
                         <Check className="w-4 h-4 mr-1" />
@@ -844,7 +873,7 @@ const Admin: React.FC = () => {
 
                     <a
                       href={`tel:${selectedBooking.phone}`}
-                      className="px-4 py-2 bg-silver-500 text-white rounded hover:bg-silver-600 flex items-center"
+                      className="px-4 py-2 bg-silver-500 text-white rounded hover:bg-silver-600 flex items-center focus:outline-none"
                     >
                       <Phone className="w-4 h-4 mr-1" />
                       Appeler
@@ -852,7 +881,7 @@ const Admin: React.FC = () => {
 
                     <a
                       href={`mailto:${selectedBooking.email}`}
-                      className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 flex items-center"
+                      className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 flex items-center focus:outline-none"
                     >
                       <Mail className="w-4 h-4 mr-1" />
                       Envoyer un email
