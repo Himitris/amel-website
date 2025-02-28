@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Calendar as CalendarIcon, 
   Clock, 
@@ -6,9 +6,11 @@ import {
   Phone, 
   Mail, 
   MessageCircle,
-  Check
+  Check,
+  Loader
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { bookingService } from '../firebase/bookingService';
 
 interface Service {
   id: string;
@@ -18,6 +20,7 @@ interface Service {
 }
 
 const Booking: React.FC = () => {
+  const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [selectedService, setSelectedService] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
@@ -30,6 +33,10 @@ const Booking: React.FC = () => {
     message: ''
   });
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [availableTimeSlots, setAvailableTimeSlots] = useState<string[]>([]);
+  const [bookingId, setBookingId] = useState<string | null>(null);
 
   const services: Service[] = [
     { id: 'coupe-brushing', name: 'Coupe & Brushing', price: '45€', duration: '1h' },
@@ -40,7 +47,7 @@ const Booking: React.FC = () => {
     { id: 'coupe-enfant', name: 'Coupe Enfant', price: '25€', duration: '30min' },
   ];
 
-  const timeSlots = [
+  const allTimeSlots = [
     '09:00', '10:00', '11:00', '12:00', '14:00', '15:00', '16:00', '17:00', '18:00'
   ];
 
@@ -65,9 +72,22 @@ const Booking: React.FC = () => {
     setStep(2);
   };
 
-  const handleDateSelect = (date: Date) => {
+  const handleDateSelect = async (date: Date) => {
+    setIsLoading(true);
+    setError(null);
     setSelectedDate(date);
-    setStep(3);
+    
+    try {
+      // Fetch available time slots for the selected date
+      const slots = await bookingService.getAvailableTimeSlots(date, allTimeSlots);
+      setAvailableTimeSlots(slots);
+      setStep(3);
+    } catch (err) {
+      setError("Impossible de charger les créneaux disponibles. Veuillez réessayer.");
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleTimeSelect = (time: string) => {
@@ -80,18 +100,50 @@ const Booking: React.FC = () => {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Ici, vous pourriez envoyer les données à votre backend
-    console.log({
-      service: selectedService,
-      date: selectedDate,
-      time: selectedTime,
-      ...formData
-    });
     
-    // Simuler une soumission réussie
-    setIsSubmitted(true);
+    if (!selectedService || !selectedDate || !selectedTime) {
+      setError("Informations de réservation incomplètes");
+      return;
+    }
+    
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      // Check if the time slot is still available
+      const isAvailable = await bookingService.checkAvailability(selectedDate, selectedTime);
+      
+      if (!isAvailable) {
+        setError("Ce créneau n'est plus disponible. Veuillez en choisir un autre.");
+        setStep(3);
+        setIsLoading(false);
+        return;
+      }
+      
+      // Create the booking in Firebase
+      const newBookingId = await bookingService.createBooking({
+        service: selectedService,
+        date: selectedDate,
+        time: selectedTime,
+        ...formData
+      });
+      
+      setBookingId(newBookingId);
+      setIsSubmitted(true);
+      
+      // Send confirmation email
+      // Note: This would typically be handled by a Cloud Function in Firebase
+      // For now, we'll just log it
+      console.log(`Booking successful! Confirmation email would be sent to ${formData.email}`);
+      
+    } catch (err) {
+      setError("Une erreur est survenue lors de la réservation. Veuillez réessayer.");
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const formatDate = (date: Date) => {
@@ -123,6 +175,13 @@ const Booking: React.FC = () => {
 
       <div className="container mx-auto px-6 py-12">
         <h1 className="text-4xl font-bold text-center mb-8">Réservez votre séance</h1>
+        
+        {/* Error Message */}
+        {error && (
+          <div className="max-w-3xl mx-auto mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded relative">
+            <strong className="font-medium">Erreur: </strong><span>{error}</span>
+          </div>
+        )}
         
         {!isSubmitted ? (
           <>
@@ -161,6 +220,16 @@ const Booking: React.FC = () => {
                 ))}
               </div>
             </div>
+
+            {/* Loading Overlay */}
+            {isLoading && (
+              <div className="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50">
+                <div className="bg-white p-6 rounded-lg shadow-xl flex items-center space-x-4">
+                  <Loader className="animate-spin w-6 h-6 text-silver-500" />
+                  <p className="text-gray-700">Chargement en cours...</p>
+                </div>
+              </div>
+            )}
 
             {/* Step 1: Service Selection */}
             {step === 1 && (
@@ -208,7 +277,8 @@ const Booking: React.FC = () => {
                       <button
                         key={index}
                         onClick={() => handleDateSelect(date)}
-                        className="p-3 rounded-lg border-2 border-transparent hover:border-silver-300 focus:outline-none focus:border-silver-500 text-center transition-colors"
+                        disabled={isLoading}
+                        className="p-3 rounded-lg border-2 border-transparent hover:border-silver-300 focus:outline-none focus:border-silver-500 text-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <div className="text-sm font-medium text-gray-500">
                           {date.toLocaleDateString('fr-FR', { weekday: 'short' })}
@@ -244,18 +314,30 @@ const Booking: React.FC = () => {
                 </div>
                 
                 <div className="bg-white p-6 rounded-lg shadow-md">
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                    {timeSlots.map((time) => (
+                  {availableTimeSlots.length > 0 ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                      {availableTimeSlots.map((time) => (
+                        <button
+                          key={time}
+                          onClick={() => handleTimeSelect(time)}
+                          className="py-3 px-4 rounded-lg border-2 border-transparent hover:border-silver-300 focus:outline-none focus:border-silver-500 text-center transition-colors flex items-center justify-center"
+                        >
+                          <Clock className="w-4 h-4 mr-2 text-silver-500" />
+                          <span className="font-medium">{time}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-gray-500 mb-4">Aucun créneau disponible pour cette date.</p>
                       <button
-                        key={time}
-                        onClick={() => handleTimeSelect(time)}
-                        className="py-3 px-4 rounded-lg border-2 border-transparent hover:border-silver-300 focus:outline-none focus:border-silver-500 text-center transition-colors flex items-center justify-center"
+                        onClick={() => setStep(2)}
+                        className="px-4 py-2 bg-silver-500 text-white rounded-lg hover:bg-silver-600 transition-colors"
                       >
-                        <Clock className="w-4 h-4 mr-2 text-silver-500" />
-                        <span className="font-medium">{time}</span>
+                        Choisir une autre date
                       </button>
-                    ))}
-                  </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -374,9 +456,16 @@ const Booking: React.FC = () => {
                     
                     <button
                       type="submit"
-                      className="w-full bg-silver-500 hover:bg-silver-600 text-white py-3 px-6 rounded-lg font-semibold transition-colors"
+                      disabled={isLoading}
+                      className="w-full bg-silver-500 hover:bg-silver-600 text-white py-3 px-6 rounded-lg font-semibold transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
                     >
-                      Confirmer la réservation
+                      {isLoading ? 
+                        <span className="flex items-center justify-center">
+                          <Loader className="animate-spin w-5 h-5 mr-2" />
+                          Traitement en cours...
+                        </span> 
+                        : 'Confirmer la réservation'
+                      }
                     </button>
                   </form>
                 </div>
@@ -411,12 +500,25 @@ const Booking: React.FC = () => {
                   </div>
                 </div>
               </div>
-              <Link 
-                to="/"
-                className="inline-block bg-silver-500 hover:bg-silver-600 text-white py-3 px-6 rounded-lg font-semibold transition-colors"
-              >
-                Retour à l'accueil
-              </Link>
+              {bookingId && (
+                <p className="text-sm text-gray-500 mb-6">
+                  Référence de réservation: <span className="font-mono font-medium">{bookingId}</span>
+                </p>
+              )}
+              <div className="flex flex-col sm:flex-row justify-center space-y-3 sm:space-y-0 sm:space-x-4">
+                <Link 
+                  to="/"
+                  className="inline-block bg-silver-500 hover:bg-silver-600 text-white py-3 px-6 rounded-lg font-semibold transition-colors"
+                >
+                  Retour à l'accueil
+                </Link>
+                <button
+                  onClick={() => window.print()}
+                  className="inline-block border border-silver-500 text-silver-500 hover:bg-silver-50 py-3 px-6 rounded-lg font-semibold transition-colors"
+                >
+                  Imprimer confirmation
+                </button>
+              </div>
             </div>
           </div>
         )}
