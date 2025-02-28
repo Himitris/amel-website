@@ -19,6 +19,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { collection, getDocs, query, Timestamp, where } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import { emailService } from '../services/emailService';
 
 interface BookingWithId extends BookingData {
   id: string;
@@ -33,10 +34,17 @@ const Admin: React.FC = () => {
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [selectedBooking, setSelectedBooking] = useState<BookingWithId | null>(null);
+  const [selectedDayBookings, setSelectedDayBookings] = useState<BookingWithId[] | null>(null);
+  const [selectedDayDate, setSelectedDayDate] = useState<Date | null>(null);
 
   // Formats for date display
   const monthYearFormat = { month: 'long', year: 'numeric' } as const;
   const dayFormat = { weekday: 'short', day: 'numeric' } as const;
+
+  useEffect(() => {
+    // Initialisez EmailJS lors du chargement du composant
+    emailService.init();
+  }, []);
 
   // Get bookings for the current month
   useEffect(() => {
@@ -130,6 +138,18 @@ const Admin: React.FC = () => {
     }
   };
 
+  const sortBookingsByTime = (bookings: BookingWithId[]) => {
+    return [...bookings].sort((a, b) => {
+      // Convertir les heures en minutes pour comparer facilement
+      const timeToMinutes = (time: string) => {
+        const [hours, minutes] = time.split(':').map(Number);
+        return hours * 60 + minutes;
+      };
+
+      return timeToMinutes(a.time) - timeToMinutes(b.time);
+    });
+  };
+
   const handlePreviousMonth = () => {
     setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
   };
@@ -171,33 +191,72 @@ const Admin: React.FC = () => {
     setIsLoading(true);
     setError(null);
     setSuccessMessage(null);
-
+  
     try {
       await bookingService.updateBookingStatus(bookingId, newStatus);
-
+  
       // Update the local state
       setBookings(prev =>
         prev.map(booking =>
           booking.id === bookingId ? { ...booking, status: newStatus } : booking
         )
       );
-
-      setSuccessMessage(`La réservation a été ${newStatus === 'confirmed' ? 'confirmée' :
-          newStatus === 'cancelled' ? 'annulée' :
+      
+      // Récupérer les détails de la réservation
+      const booking = bookings.find(b => b.id === bookingId);
+      
+      if (booking) {
+        // Si le statut est "confirmed", envoyez un email de confirmation
+        if (newStatus === 'confirmed') {
+          // Envoyer l'email de confirmation
+          const emailSent = await emailService.sendConfirmationEmail(booking, bookingId);
+          if (emailSent) {
+            setSuccessMessage(`La réservation a été confirmée avec succès et un email de confirmation a été envoyé à ${booking.email}.`);
+          } else {
+            setSuccessMessage(`La réservation a été confirmée, mais l'envoi de l'email a échoué.`);
+          }
+        } 
+        // Si le statut est "cancelled", envoyez un email d'annulation
+        else if (newStatus === 'cancelled') {
+          // Envoyer l'email d'annulation
+          const emailSent = await emailService.sendCancellationEmail(booking, bookingId);
+          if (emailSent) {
+            setSuccessMessage(`La réservation a été annulée avec succès et un email d'annulation a été envoyé à ${booking.email}.`);
+          } else {
+            setSuccessMessage(`La réservation a été annulée, mais l'envoi de l'email a échoué.`);
+          }
+        } else {
+          setSuccessMessage(`La réservation a été ${
             newStatus === 'completed' ? 'marquée comme terminée' : 'mise à jour'
-        } avec succès.`);
-
+          } avec succès.`);
+        }
+      } else {
+        setSuccessMessage(`La réservation a été mise à jour avec succès.`);
+      }
+  
       // If we're viewing details, update the selected booking
       if (selectedBooking && selectedBooking.id === bookingId) {
         setSelectedBooking({ ...selectedBooking, status: newStatus });
       }
-
+  
     } catch (err) {
       console.error('Error updating booking status:', err);
       setError('Impossible de mettre à jour la réservation. Veuillez réessayer.');
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const openDayDetails = (date: Date) => {
+    const dayBookings = getBookingsForDay(date);
+    const sortedBookings = sortBookingsByTime(dayBookings);
+    setSelectedDayBookings(sortedBookings);
+    setSelectedDayDate(date);
+  };
+
+  const closeDayDetails = () => {
+    setSelectedDayBookings(null);
+    setSelectedDayDate(null);
   };
 
   const openBookingDetails = (booking: BookingWithId) => {
@@ -326,7 +385,88 @@ const Admin: React.FC = () => {
   // Render login form
   if (!currentUser) {
     return (
+
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        {selectedDayBookings && selectedDayDate && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+              <div className="p-6">
+                <div className="flex justify-between items-start mb-6">
+                  <h3 className="text-xl font-semibold">
+                    Rendez-vous du {formatDate(selectedDayDate)}
+                  </h3>
+                  <button
+                    onClick={closeDayDetails}
+                    className="text-gray-400 hover:text-gray-500"
+                  >
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+
+                {selectedDayBookings.length === 0 ? (
+                  <div className="text-center py-8">
+                    <p className="text-gray-500">Aucune réservation pour cette journée.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {selectedDayBookings.map(booking => (
+                      <div
+                        key={booking.id}
+                        className="border rounded-lg overflow-hidden bg-white hover:shadow-md transition-shadow"
+                      >
+                        <div className="flex justify-between items-center p-4 border-b">
+                          <div className="flex items-center">
+                            <div className="mr-4">
+                              <div className="text-lg font-semibold">{booking.time}</div>
+                              <div className={`text-sm px-2 py-0.5 rounded-full inline-block ${getStatusClass(booking.status)}`}>
+                                {getStatusLabel(booking.status)}
+                              </div>
+                            </div>
+                            <div>
+                              <div className="font-medium">{booking.name}</div>
+                              <div className="text-sm text-gray-600">{getServiceName(booking.service)}</div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => openBookingDetails(booking)}
+                            className="px-3 py-1 bg-silver-500 text-white rounded-lg hover:bg-silver-600 text-sm"
+                          >
+                            Détails
+                          </button>
+                        </div>
+
+                        <div className="p-4 bg-gray-50 text-sm grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                            <div className="flex items-center">
+                              <Phone className="w-4 h-4 text-gray-400 mr-2" />
+                              <a href={`tel:${booking.phone}`} className="hover:text-silver-600">
+                                {booking.phone}
+                              </a>
+                            </div>
+                          </div>
+                          <div>
+                            <div className="flex items-center">
+                              <Mail className="w-4 h-4 text-gray-400 mr-2" />
+                              <a href={`mailto:${booking.email}`} className="hover:text-silver-600">
+                                {booking.email}
+                              </a>
+                            </div>
+                          </div>
+                          <div className="md:col-span-2">
+                            <div className="flex items-center">
+                              <MapPin className="w-4 h-4 text-gray-400 mr-2" />
+                              <span className="truncate">{booking.address}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
         <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-xl shadow-lg">
           <div className="text-center">
             <h2 className="mt-6 text-3xl font-extrabold text-gray-900">Espace Administration</h2>
@@ -502,33 +642,53 @@ const Admin: React.FC = () => {
 
               // Day cell with bookings
               const dayBookings = getBookingsForDay(date);
+              const sortedBookings = sortBookingsByTime(dayBookings);
               const isCurrentDay = isToday(date);
+              const hasBookings = dayBookings.length > 0;
 
               return (
                 <div
                   key={`day-${date.getDate()}`}
-                  className={`bg-white p-2 h-32 overflow-y-auto ${isCurrentDay ? 'bg-blue-50' : ''}`}
+                  className={`bg-white p-2 h-32 overflow-y-auto relative group ${isCurrentDay ? 'bg-blue-50' : ''}`}
                 >
-                  <div className={`text-right font-medium ${isCurrentDay ? 'text-blue-600' : ''}`}>
+                  <div className={`text-right font-medium mb-2 ${isCurrentDay ? 'text-blue-600' : ''}`}>
                     {date.toLocaleDateString('fr-FR', dayFormat)}
                   </div>
                   <div className="mt-2 space-y-1">
-                    {dayBookings.length === 0 ? (
+                    {sortedBookings.length === 0 ? (
                       <p className="text-xs text-gray-400 italic">Aucune réservation</p>
                     ) : (
-                      dayBookings.map(booking => (
-                        <button
-                          key={booking.id}
-                          onClick={() => openBookingDetails(booking)}
-                          className={`block w-full text-left px-2 py-1 rounded text-xs ${getStatusClass(booking.status)}`}
-                        >
-                          <div className="font-medium">{formatTime(booking.time)}</div>
-                          <div className="truncate">{booking.name}</div>
-                          <div className="truncate text-xs">{getServiceName(booking.service)}</div>
-                        </button>
-                      ))
+                      <>
+                        {sortedBookings.slice(0, 2).map(booking => (
+                          <button
+                            key={booking.id}
+                            onClick={() => openBookingDetails(booking)}
+                            className={`block w-full text-left px-2 py-1 rounded text-xs ${getStatusClass(booking.status)}`}
+                          >
+                            <div className="font-medium">{booking.time}</div>
+                            <div className="truncate">{booking.name}</div>
+                            <div className="truncate text-xs">{getServiceName(booking.service)}</div>
+                          </button>
+                        ))}
+                        {sortedBookings.length > 2 && (
+                          <button
+                            onClick={() => openDayDetails(date)}
+                            className="block w-full text-center text-xs py-1 bg-gray-100 hover:bg-gray-200 rounded text-gray-600"
+                          >
+                            +{sortedBookings.length - 2} autres
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
+
+                  {/* Overlay pour rendre le jour entier cliquable seulement s'il y a des réservations */}
+                  {hasBookings && (
+                    <div
+                      onClick={() => openDayDetails(date)}
+                      className="absolute inset-0 cursor-pointer opacity-0 group-hover:opacity-20 bg-silver-500 transition-opacity"
+                    ></div>
+                  )}
                 </div>
               );
             })}
