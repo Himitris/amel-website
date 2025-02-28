@@ -78,13 +78,20 @@ const Booking: React.FC = () => {
     setSelectedDate(date);
     
     try {
+      console.log('Fetching available time slots for date:', date.toISOString());
+      
+      // Ajout d'un délai artificiel pour assurer que Firebase a le temps de traiter
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
       // Fetch available time slots for the selected date
       const slots = await bookingService.getAvailableTimeSlots(date, allTimeSlots);
+      console.log('Available time slots returned:', slots);
+      
       setAvailableTimeSlots(slots);
       setStep(3);
     } catch (err) {
+      console.error('Error fetching available time slots:', err);
       setError("Impossible de charger les créneaux disponibles. Veuillez réessayer.");
-      console.error(err);
     } finally {
       setIsLoading(false);
     }

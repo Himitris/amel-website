@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Calendar, 
-  ChevronLeft, 
-  ChevronRight, 
-  Clock, 
-  User, 
-  MapPin, 
+import {
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  User,
+  MapPin,
   Phone,
   Mail,
   Check,
@@ -17,6 +17,8 @@ import {
 import { bookingService, BookingData } from '../firebase/bookingService';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { collection, getDocs, query, Timestamp, where } from 'firebase/firestore';
+import { db } from '../firebase/config';
 
 interface BookingWithId extends BookingData {
   id: string;
@@ -50,32 +52,79 @@ const Admin: React.FC = () => {
     }
   }, [currentDate, currentUser]);
 
+  const mapBookingData = (doc: any): BookingWithId => {
+    const data = doc.data();
+    return {
+      id: doc.id,
+      date: data.date.toDate(),
+      createdAt: data.createdAt.toDate(),
+      service: data.service,
+      time: data.time,
+      name: data.name,
+      email: data.email,
+      phone: data.phone,
+      address: data.address,
+      message: data.message,
+      status: data.status
+    };
+  };
+
   const fetchBookingsForMonth = async () => {
     if (!currentUser) return;
-    
+
     setIsLoading(true);
     setError(null);
-    
+
     try {
+      console.log('Fetching bookings for month:', currentDate.getMonth() + 1);
+
       // Create a date range for the current month
       const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
       const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0, 23, 59, 59);
-      
-      // Fetch all bookings for the month
-      const monthBookings: BookingWithId[] = [];
-      
-      // This is a simplified approach - in a real app you'd want to query Firestore directly
-      // for a specific date range, but for demo purposes we'll fetch by day for each day of the month
-      for (let day = 1; day <= endOfMonth.getDate(); day++) {
-        const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
-        const dayBookings = await bookingService.getBookingsForDate(date);
-        monthBookings.push(...dayBookings);
-      }
-      
+
+      // Approach 1: Get all bookings at once instead of day by day
+      // This requires a composite index on date
+      const bookingsRef = collection(db, 'bookings');
+      const q = query(
+        bookingsRef,
+        where('date', '>=', Timestamp.fromDate(startOfMonth)),
+        where('date', '<=', Timestamp.fromDate(endOfMonth))
+      );
+
+      const querySnapshot = await getDocs(q);
+      console.log('Found', querySnapshot.docs.length, 'bookings');
+
+      const monthBookings: BookingWithId[] = querySnapshot.docs.map(mapBookingData);
+
+      console.log('Processed bookings:', monthBookings);
       setBookings(monthBookings);
     } catch (err) {
       console.error('Error fetching bookings:', err);
-      setError('Impossible de charger les réservations. Veuillez réessayer.');
+
+      // Fallback approach if the direct query fails
+      try {
+        console.log('Using fallback approach...');
+        const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+        const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+
+        // Fallback: Get all bookings
+        const bookingsRef = collection(db, 'bookings');
+        const allBookingsSnapshot = await getDocs(bookingsRef);
+
+        // Filter locally
+        const monthBookings: BookingWithId[] = allBookingsSnapshot.docs
+          .map(mapBookingData)
+          .filter(booking => {
+            const bookingDate = booking.date;
+            return bookingDate >= startOfMonth && bookingDate <= endOfMonth;
+          });
+
+        console.log('Fallback found', monthBookings.length, 'bookings');
+        setBookings(monthBookings);
+      } catch (fallbackErr) {
+        console.error('Fallback approach failed:', fallbackErr);
+        setError('Impossible de charger les réservations. Veuillez réessayer.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -93,7 +142,7 @@ const Admin: React.FC = () => {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
-    
+
     try {
       await login(loginForm.email, loginForm.password);
     } catch (err) {
@@ -122,28 +171,27 @@ const Admin: React.FC = () => {
     setIsLoading(true);
     setError(null);
     setSuccessMessage(null);
-    
+
     try {
       await bookingService.updateBookingStatus(bookingId, newStatus);
-      
+
       // Update the local state
-      setBookings(prev => 
-        prev.map(booking => 
+      setBookings(prev =>
+        prev.map(booking =>
           booking.id === bookingId ? { ...booking, status: newStatus } : booking
         )
       );
-      
-      setSuccessMessage(`La réservation a été ${
-        newStatus === 'confirmed' ? 'confirmée' : 
-        newStatus === 'cancelled' ? 'annulée' : 
-        newStatus === 'completed' ? 'marquée comme terminée' : 'mise à jour'
-      } avec succès.`);
-      
+
+      setSuccessMessage(`La réservation a été ${newStatus === 'confirmed' ? 'confirmée' :
+          newStatus === 'cancelled' ? 'annulée' :
+            newStatus === 'completed' ? 'marquée comme terminée' : 'mise à jour'
+        } avec succès.`);
+
       // If we're viewing details, update the selected booking
       if (selectedBooking && selectedBooking.id === bookingId) {
         setSelectedBooking({ ...selectedBooking, status: newStatus });
       }
-      
+
     } catch (err) {
       console.error('Error updating booking status:', err);
       setError('Impossible de mettre à jour la réservation. Veuillez réessayer.');
@@ -164,31 +212,31 @@ const Admin: React.FC = () => {
   const generateCalendarDays = () => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
-    
+
     // First day of the month
     const firstDay = new Date(year, month, 1);
-    
+
     // Last day of the month
     const lastDay = new Date(year, month + 1, 0);
-    
+
     // Get the first day of the week (0 = Sunday, 1 = Monday, etc.)
     const startingDayOfWeek = firstDay.getDay();
-    
+
     // Array to hold calendar days
     const calendarDays = [];
-    
+
     // Add empty cells for days before the first day of the month
     // Adjust to start week from Monday (1) instead of Sunday (0)
     const adjustedStartingDay = startingDayOfWeek === 0 ? 6 : startingDayOfWeek - 1;
     for (let i = 0; i < adjustedStartingDay; i++) {
       calendarDays.push(null);
     }
-    
+
     // Add days of the month
     for (let day = 1; day <= lastDay.getDate(); day++) {
       calendarDays.push(new Date(year, month, day));
     }
-    
+
     return calendarDays;
   };
 
@@ -251,7 +299,7 @@ const Admin: React.FC = () => {
       'coupe-homme': 'Coupe Homme',
       'coupe-enfant': 'Coupe Enfant'
     };
-    
+
     return services[serviceId] || serviceId;
   };
 
@@ -286,13 +334,13 @@ const Admin: React.FC = () => {
               Connectez-vous pour gérer vos réservations
             </p>
           </div>
-          
+
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded relative">
               {error}
             </div>
           )}
-          
+
           <form className="mt-8 space-y-6" onSubmit={handleLogin}>
             <div className="rounded-md shadow-sm -space-y-px">
               <div>
@@ -342,7 +390,7 @@ const Admin: React.FC = () => {
               </button>
             </div>
           </form>
-          
+
           <div className="text-center mt-4">
             <Link to="/" className="text-sm text-silver-600 hover:text-silver-500">
               Retour à l'accueil
@@ -457,8 +505,8 @@ const Admin: React.FC = () => {
               const isCurrentDay = isToday(date);
 
               return (
-                <div 
-                  key={`day-${date.getDate()}`} 
+                <div
+                  key={`day-${date.getDate()}`}
                   className={`bg-white p-2 h-32 overflow-y-auto ${isCurrentDay ? 'bg-blue-50' : ''}`}
                 >
                   <div className={`text-right font-medium ${isCurrentDay ? 'text-blue-600' : ''}`}>
@@ -494,20 +542,20 @@ const Admin: React.FC = () => {
               <div className="p-6">
                 <div className="flex justify-between items-start mb-4">
                   <h3 className="text-xl font-semibold">Détails de la réservation</h3>
-                  <button 
+                  <button
                     onClick={closeBookingDetails}
                     className="text-gray-400 hover:text-gray-500"
                   >
                     <X className="w-6 h-6" />
                   </button>
                 </div>
-                
+
                 <div className="mb-6">
                   <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm ${getStatusClass(selectedBooking.status)}`}>
                     {getStatusLabel(selectedBooking.status)}
                   </div>
                 </div>
-                
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
                     <h4 className="font-medium text-gray-500 mb-2">Informations de réservation</h4>
@@ -535,7 +583,7 @@ const Admin: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                  
+
                   <div>
                     <h4 className="font-medium text-gray-500 mb-2">Informations client</h4>
                     <div className="space-y-3">
@@ -570,20 +618,20 @@ const Admin: React.FC = () => {
                     </div>
                   </div>
                 </div>
-                
+
                 {selectedBooking.message && (
                   <div className="mt-6">
                     <h4 className="font-medium text-gray-500 mb-2">Message</h4>
                     <p className="bg-gray-50 p-3 rounded text-gray-700">{selectedBooking.message}</p>
                   </div>
                 )}
-                
+
                 <div className="mt-8 border-t pt-6">
                   <h4 className="font-medium text-gray-500 mb-3">Actions</h4>
                   <div className="flex flex-wrap gap-3">
                     {selectedBooking.status === 'pending' && (
                       <>
-                        <button 
+                        <button
                           onClick={() => updateBookingStatus(selectedBooking.id, 'confirmed')}
                           className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 flex items-center"
                           disabled={isLoading}
@@ -591,7 +639,7 @@ const Admin: React.FC = () => {
                           <Check className="w-4 h-4 mr-1" />
                           Confirmer
                         </button>
-                        <button 
+                        <button
                           onClick={() => updateBookingStatus(selectedBooking.id, 'cancelled')}
                           className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 flex items-center"
                           disabled={isLoading}
@@ -601,10 +649,10 @@ const Admin: React.FC = () => {
                         </button>
                       </>
                     )}
-                    
+
                     {selectedBooking.status === 'confirmed' && (
                       <>
-                        <button 
+                        <button
                           onClick={() => updateBookingStatus(selectedBooking.id, 'completed')}
                           className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center"
                           disabled={isLoading}
@@ -612,7 +660,7 @@ const Admin: React.FC = () => {
                           <Check className="w-4 h-4 mr-1" />
                           Marquer comme terminé
                         </button>
-                        <button 
+                        <button
                           onClick={() => updateBookingStatus(selectedBooking.id, 'cancelled')}
                           className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 flex items-center"
                           disabled={isLoading}
@@ -622,9 +670,9 @@ const Admin: React.FC = () => {
                         </button>
                       </>
                     )}
-                    
+
                     {(selectedBooking.status === 'cancelled' || selectedBooking.status === 'completed') && (
-                      <button 
+                      <button
                         onClick={() => updateBookingStatus(selectedBooking.id, 'confirmed')}
                         className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 flex items-center"
                         disabled={isLoading}
@@ -633,16 +681,16 @@ const Admin: React.FC = () => {
                         Réactiver
                       </button>
                     )}
-                    
-                    <a 
+
+                    <a
                       href={`tel:${selectedBooking.phone}`}
                       className="px-4 py-2 bg-silver-500 text-white rounded hover:bg-silver-600 flex items-center"
                     >
                       <Phone className="w-4 h-4 mr-1" />
                       Appeler
                     </a>
-                    
-                    <a 
+
+                    <a
                       href={`mailto:${selectedBooking.email}`}
                       className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 flex items-center"
                     >
@@ -655,28 +703,28 @@ const Admin: React.FC = () => {
             </div>
           </div>
         )}
-        
+
         {/* Summary section */}
         <div className="mt-8 grid grid-cols-1 md:grid-cols-4 gap-4">
           {[
             { label: 'Total du mois', count: bookings.length, icon: <Calendar className="w-5 h-5" />, color: 'bg-blue-500' },
-            { 
-              label: 'En attente', 
-              count: bookings.filter(b => b.status === 'pending').length, 
-              icon: <AlertTriangle className="w-5 h-5" />, 
-              color: 'bg-yellow-500' 
+            {
+              label: 'En attente',
+              count: bookings.filter(b => b.status === 'pending').length,
+              icon: <AlertTriangle className="w-5 h-5" />,
+              color: 'bg-yellow-500'
             },
-            { 
-              label: 'Confirmées', 
-              count: bookings.filter(b => b.status === 'confirmed').length, 
-              icon: <Check className="w-5 h-5" />, 
-              color: 'bg-green-500' 
+            {
+              label: 'Confirmées',
+              count: bookings.filter(b => b.status === 'confirmed').length,
+              icon: <Check className="w-5 h-5" />,
+              color: 'bg-green-500'
             },
-            { 
-              label: 'Annulées', 
-              count: bookings.filter(b => b.status === 'cancelled').length, 
-              icon: <X className="w-5 h-5" />, 
-              color: 'bg-red-500' 
+            {
+              label: 'Annulées',
+              count: bookings.filter(b => b.status === 'cancelled').length,
+              icon: <X className="w-5 h-5" />,
+              color: 'bg-red-500'
             }
           ].map((item, index) => (
             <div key={index} className="bg-white rounded-lg shadow p-4">

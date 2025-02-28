@@ -35,6 +35,16 @@ interface FirestoreBookingData extends Omit<BookingData, 'date' | 'createdAt'> {
 // Collection reference
 const bookingsCollection = collection(db, 'bookings');
 
+// Fonction utilitaire pour convertir une date JS en Timestamp Firestore
+const dateToFirestoreTimestamp = (date: Date): Timestamp => {
+  return Timestamp.fromDate(date);
+};
+
+// Fonction utilitaire pour convertir un Timestamp Firestore en date JS
+const firestoreTimestampToDate = (timestamp: Timestamp): Date => {
+  return timestamp.toDate();
+};
+
 // Service functions
 export const bookingService = {
   // Create a new booking
@@ -43,8 +53,8 @@ export const bookingService = {
       const booking: FirestoreBookingData = {
         ...bookingData,
         status: 'pending',
-        date: Timestamp.fromDate(bookingData.date),
-        createdAt: Timestamp.fromDate(new Date())
+        date: dateToFirestoreTimestamp(bookingData.date),
+        createdAt: dateToFirestoreTimestamp(new Date())
       };
       
       const docRef = await addDoc(bookingsCollection, booking);
@@ -61,12 +71,12 @@ export const bookingService = {
       // Convert date to Firestore Timestamp for the start of the day
       const startDate = new Date(date);
       startDate.setHours(0, 0, 0, 0);
-      const startTimestamp = Timestamp.fromDate(startDate);
+      const startTimestamp = dateToFirestoreTimestamp(startDate);
       
       // For the end of the day
       const endDate = new Date(date);
       endDate.setHours(23, 59, 59, 999);
-      const endTimestamp = Timestamp.fromDate(endDate);
+      const endTimestamp = dateToFirestoreTimestamp(endDate);
       
       // Query bookings for the specified date and time
       const q = query(
@@ -93,12 +103,12 @@ export const bookingService = {
       // Convert date to Firestore Timestamp for the start of the day
       const startDate = new Date(date);
       startDate.setHours(0, 0, 0, 0);
-      const startTimestamp = Timestamp.fromDate(startDate);
+      const startTimestamp = dateToFirestoreTimestamp(startDate);
       
       // For the end of the day
       const endDate = new Date(date);
       endDate.setHours(23, 59, 59, 999);
-      const endTimestamp = Timestamp.fromDate(endDate);
+      const endTimestamp = dateToFirestoreTimestamp(endDate);
       
       // Query bookings for the specified date
       const q = query(
@@ -111,7 +121,13 @@ export const bookingService = {
       const querySnapshot = await getDocs(q);
       
       // Get already booked time slots
-      const bookedTimeSlots = querySnapshot.docs.map(doc => doc.data().time);
+      const bookedTimeSlots = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        return data.time;
+      });
+      
+      console.log('Date query:', startDate.toISOString(), 'to', endDate.toISOString());
+      console.log('Booked time slots:', bookedTimeSlots);
       
       // Filter out booked slots from all time slots
       return allTimeSlots.filter(slot => !bookedTimeSlots.includes(slot));
@@ -124,6 +140,8 @@ export const bookingService = {
   // Get bookings for a specific date
   async getBookingsForDate(date: Date): Promise<Array<BookingData & { id: string }>> {
     try {
+      console.log('Fetching bookings for date:', date.toISOString());
+      
       // Convert date to Firestore Timestamp for the start of the day
       const startDate = new Date(date);
       startDate.setHours(0, 0, 0, 0);
@@ -134,6 +152,8 @@ export const bookingService = {
       endDate.setHours(23, 59, 59, 999);
       const endTimestamp = Timestamp.fromDate(endDate);
       
+      console.log('Date range:', startDate.toISOString(), 'to', endDate.toISOString());
+      
       // Query bookings for the specified date
       const q = query(
         bookingsCollection, 
@@ -142,10 +162,12 @@ export const bookingService = {
       );
       
       const querySnapshot = await getDocs(q);
+      console.log('Found', querySnapshot.docs.length, 'bookings');
       
       // Convert Firestore data to our BookingData format
       return querySnapshot.docs.map(doc => {
         const data = doc.data() as FirestoreBookingData;
+        console.log('Booking data:', doc.id, data);
         return {
           ...data,
           id: doc.id,
@@ -181,8 +203,8 @@ export const bookingService = {
         return {
           ...data,
           id: bookingSnap.id,
-          date: data.date.toDate(),
-          createdAt: data.createdAt.toDate()
+          date: firestoreTimestampToDate(data.date),
+          createdAt: firestoreTimestampToDate(data.createdAt)
         };
       } else {
         return null;
