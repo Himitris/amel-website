@@ -31,7 +31,7 @@ const Navbar: React.FC = () => {
         <div className="flex justify-between items-center">
           <Link to="/" className="flex items-center space-x-2">
             <Scissors className={`w-8 h-8 ${scrollPosition > 50 ? 'text-silver-600' : 'text-white'}`} />
-            <span className={`text-xl font-bold ${scrollPosition > 50 ? 'text-gray-800' : 'text-white'}`}>Élégance</span>
+            <span className={`text-xl font-bold ${scrollPosition > 50 ? 'text-gray-800' : 'text-white'}`}>ACDC</span>
           </Link>
           
           {/* Desktop Navigation */}
