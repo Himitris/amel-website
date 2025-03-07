@@ -1,16 +1,19 @@
+// src/firebase/bookingService.ts
 import { db } from './config';
-import { 
-  collection, 
-  addDoc, 
-  getDocs, 
-  query, 
-  where, 
-  Timestamp, 
-  updateDoc, 
-  doc, 
+import {
+  collection,
+  addDoc,
+  getDocs,
+  query,
+  where,
+  Timestamp,
+  updateDoc,
+  doc,
   deleteDoc,
   getDoc
 } from 'firebase/firestore';
+import { availableSlotsService } from './availableSlotsService';
+import { syncService } from './syncService';
 
 // Types
 export interface BookingData {
@@ -45,11 +48,22 @@ const firestoreTimestampToDate = (timestamp: Timestamp): Date => {
   return timestamp.toDate();
 };
 
+// Liste des créneaux horaires disponibles
+const allTimeSlots = [
+  '09:00', '10:00', '11:00', '12:00', '14:00', '15:00', '16:00', '17:00', '18:00'
+];
+
 // Service functions
 export const bookingService = {
   // Create a new booking
   async createBooking(bookingData: Omit<BookingData, 'status' | 'createdAt'>): Promise<string> {
     try {
+      const isAvailable = await availableSlotsService.isSlotAvailable(bookingData.date, bookingData.time);
+      
+      if (!isAvailable) {
+        throw new Error('Ce créneau n\'est plus disponible');
+      }
+      
       const booking: FirestoreBookingData = {
         ...bookingData,
         status: 'pending',
@@ -58,6 +72,7 @@ export const bookingService = {
       };
       
       const docRef = await addDoc(bookingsCollection, booking);
+
       return docRef.id;
     } catch (error) {
       console.error('Error creating booking:', error);
@@ -68,29 +83,7 @@ export const bookingService = {
   // Check if a time slot is available
   async checkAvailability(date: Date, time: string): Promise<boolean> {
     try {
-      // Convert date to Firestore Timestamp for the start of the day
-      const startDate = new Date(date);
-      startDate.setHours(0, 0, 0, 0);
-      const startTimestamp = dateToFirestoreTimestamp(startDate);
-      
-      // For the end of the day
-      const endDate = new Date(date);
-      endDate.setHours(23, 59, 59, 999);
-      const endTimestamp = dateToFirestoreTimestamp(endDate);
-      
-      // Query bookings for the specified date and time
-      const q = query(
-        bookingsCollection, 
-        where('date', '>=', startTimestamp),
-        where('date', '<=', endTimestamp),
-        where('time', '==', time),
-        where('status', 'in', ['pending', 'confirmed'])
-      );
-      
-      const querySnapshot = await getDocs(q);
-      
-      // If there are no bookings at this time, it's available
-      return querySnapshot.empty;
+      return await availableSlotsService.isSlotAvailable(date, time);
     } catch (error) {
       console.error('Error checking availability:', error);
       throw error;
@@ -100,37 +93,16 @@ export const bookingService = {
   // Get available time slots for a specific date
   async getAvailableTimeSlots(date: Date, allTimeSlots: string[]): Promise<string[]> {
     try {
-      // Convert date to Firestore Timestamp for the start of the day
-      const startDate = new Date(date);
-      startDate.setHours(0, 0, 0, 0);
-      const startTimestamp = dateToFirestoreTimestamp(startDate);
-      
-      // For the end of the day
-      const endDate = new Date(date);
-      endDate.setHours(23, 59, 59, 999);
-      const endTimestamp = dateToFirestoreTimestamp(endDate);
-      
-      // Query bookings for the specified date
-      const q = query(
-        bookingsCollection, 
-        where('date', '>=', startTimestamp),
-        where('date', '<=', endTimestamp),
-        where('status', 'in', ['pending', 'confirmed'])
-      );
-      
-      const querySnapshot = await getDocs(q);
-      
-      // Get already booked time slots
-      const bookedTimeSlots = querySnapshot.docs.map(doc => {
-        const data = doc.data();
-        return data.time;
-      });
-      
-      console.log('Date query:', startDate.toISOString(), 'to', endDate.toISOString());
-      console.log('Booked time slots:', bookedTimeSlots);
-      
-      // Filter out booked slots from all time slots
-      return allTimeSlots.filter(slot => !bookedTimeSlots.includes(slot));
+      const availableSlots = await availableSlotsService.getAvailableSlotsForDate(date);
+
+      // Si aucun créneau n'est défini, initialiser les créneaux pour cette date
+      if (availableSlots.length === 0) {
+        await syncService.syncSlotsForDate(date, allTimeSlots);
+        const updatedSlots = await availableSlotsService.getAvailableSlotsForDate(date);
+        return updatedSlots.map(slot => slot.time);
+      }
+
+      return availableSlots.map(slot => slot.time);
     } catch (error) {
       console.error('Error getting available time slots:', error);
       throw error;
@@ -140,34 +112,30 @@ export const bookingService = {
   // Get bookings for a specific date
   async getBookingsForDate(date: Date): Promise<Array<BookingData & { id: string }>> {
     try {
-      console.log('Fetching bookings for date:', date.toISOString());
-      
+
       // Convert date to Firestore Timestamp for the start of the day
       const startDate = new Date(date);
       startDate.setHours(0, 0, 0, 0);
       const startTimestamp = Timestamp.fromDate(startDate);
-      
+
       // For the end of the day
       const endDate = new Date(date);
       endDate.setHours(23, 59, 59, 999);
       const endTimestamp = Timestamp.fromDate(endDate);
-      
-      console.log('Date range:', startDate.toISOString(), 'to', endDate.toISOString());
-      
+
+
       // Query bookings for the specified date
       const q = query(
-        bookingsCollection, 
+        bookingsCollection,
         where('date', '>=', startTimestamp),
         where('date', '<=', endTimestamp)
       );
-      
+
       const querySnapshot = await getDocs(q);
-      console.log('Found', querySnapshot.docs.length, 'bookings');
-      
+
       // Convert Firestore data to our BookingData format
       return querySnapshot.docs.map(doc => {
         const data = doc.data() as FirestoreBookingData;
-        console.log('Booking data:', doc.id, data);
         return {
           ...data,
           id: doc.id,
@@ -184,8 +152,33 @@ export const bookingService = {
   // Update booking status
   async updateBookingStatus(bookingId: string, status: BookingData['status']): Promise<void> {
     try {
+      // 1. Récupérer la réservation
       const bookingRef = doc(db, 'bookings', bookingId);
+      const bookingSnap = await getDoc(bookingRef);
+
+      if (!bookingSnap.exists()) {
+        throw new Error('Réservation non trouvée');
+      }
+
+      const bookingData = bookingSnap.data() as FirestoreBookingData;
+      const booking: BookingData = {
+        ...bookingData,
+        date: firestoreTimestampToDate(bookingData.date),
+        createdAt: firestoreTimestampToDate(bookingData.createdAt)
+      };
+
+      // 2. Mettre à jour le statut
       await updateDoc(bookingRef, { status });
+
+      // 3. Mettre à jour la disponibilité du créneau
+      // Si la réservation est annulée, le créneau redevient disponible
+      if (status === 'cancelled') {
+        await syncService.updateSlotBasedOnBooking(booking, true);
+      }
+      // Si la réservation est confirmée ou terminée, le créneau reste indisponible
+      else if (status === 'confirmed' || status === 'completed') {
+        await syncService.updateSlotBasedOnBooking(booking, false);
+      }
     } catch (error) {
       console.error('Error updating booking status:', error);
       throw error;
@@ -197,7 +190,7 @@ export const bookingService = {
     try {
       const bookingRef = doc(db, 'bookings', bookingId);
       const bookingSnap = await getDoc(bookingRef);
-      
+
       if (bookingSnap.exists()) {
         const data = bookingSnap.data() as FirestoreBookingData;
         return {
@@ -217,16 +210,56 @@ export const bookingService = {
 
   // Cancel a booking
   async cancelBooking(bookingId: string): Promise<void> {
-    return this.updateBookingStatus(bookingId, 'cancelled');
+    try {
+      // 1. Récupérer les détails de la réservation
+      const booking = await bookingService.getBookingById(bookingId);
+
+      if (!booking) {
+        throw new Error("Réservation non trouvée");
+      }
+
+      // 2. Annuler la réservation
+      await bookingService.updateBookingStatus(bookingId, 'cancelled');
+
+      // 3. Rendre le créneau à nouveau disponible
+      await availableSlotsService.setSlotAvailability(booking.date, booking.time, true);
+
+      // 4. Afficher un message de succès, etc.
+
+    } catch (error) {
+      console.error("Erreur lors de l'annulation:", error);
+      // Gérer l'erreur
+    }
   },
 
   // Delete a booking
   async deleteBooking(bookingId: string): Promise<void> {
     try {
+      // 1. Récupérer la réservation avant de la supprimer
+      const booking = await this.getBookingById(bookingId);
+
+      if (!booking) {
+        throw new Error('Réservation non trouvée');
+      }
+
+      // 2. Supprimer la réservation
       const bookingRef = doc(db, 'bookings', bookingId);
       await deleteDoc(bookingRef);
+
+      // 3. Rendre le créneau à nouveau disponible
+      await syncService.updateSlotBasedOnBooking(booking, true);
     } catch (error) {
       console.error('Error deleting booking:', error);
+      throw error;
+    }
+  },
+
+  // Initialiser les créneaux pour les prochains jours
+  async initializeUpcomingSlots(): Promise<void> {
+    try {
+      await syncService.initializeUpcomingSlots(allTimeSlots, [0]); // Exclure le dimanche (0)
+    } catch (error) {
+      console.error('Error initializing upcoming slots:', error);
       throw error;
     }
   }

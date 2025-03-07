@@ -79,7 +79,6 @@ export const emailService = {
         templateParams
       );
 
-      console.log('Email de confirmation envoyé avec succès:', response);
       return true;
     } catch (error) {
       console.error('Erreur lors de l\'envoi de l\'email de confirmation:', error);
@@ -115,7 +114,6 @@ export const emailService = {
         templateParams
       );
 
-      console.log('Email d\'annulation envoyé avec succès:', response);
       return true;
     } catch (error) {
       console.error('Erreur lors de l\'envoi de l\'email d\'annulation:', error);

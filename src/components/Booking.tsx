@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Calendar as CalendarIcon, 
-  Clock, 
-  ArrowLeft, 
-  Phone, 
-  Mail, 
+import {
+  Calendar as CalendarIcon,
+  Clock,
+  ArrowLeft,
+  Phone,
+  Mail,
   MessageCircle,
   Check,
   Loader
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { bookingService } from '../firebase/bookingService';
+import availableSlotsService from '../firebase/availableSlotsService';
+import syncService from '../firebase/syncService';
 
 interface Service {
   id: string;
@@ -55,13 +57,13 @@ const Booking: React.FC = () => {
   const generateDates = () => {
     const dates = [];
     const today = new Date();
-    
+
     for (let i = 1; i <= 14; i++) {
       const date = new Date(today);
       date.setDate(today.getDate() + i);
       dates.push(date);
     }
-    
+
     return dates;
   };
 
@@ -76,18 +78,19 @@ const Booking: React.FC = () => {
     setIsLoading(true);
     setError(null);
     setSelectedDate(date);
-    
+
     try {
-      console.log('Fetching available time slots for date:', date.toISOString());
-      
-      // Ajout d'un délai artificiel pour assurer que Firebase a le temps de traiter
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Fetch available time slots for the selected date
-      const slots = await bookingService.getAvailableTimeSlots(date, allTimeSlots);
-      console.log('Available time slots returned:', slots);
-      
-      setAvailableTimeSlots(slots);
+      // Utilisez la nouvelle méthode qui vérifie à la fois availableSlots et bookings
+      const availableSlots = await availableSlotsService.getActuallyAvailableSlotsForDate(date);
+
+      // Si aucun créneau n'est défini, initialiser avec les créneaux par défaut
+      if (availableSlots.length === 0) {
+        // Afficher un message ou proposer de choisir une autre date
+        setAvailableTimeSlots([]);
+      } else {
+        setAvailableTimeSlots(availableSlots.map(slot => slot.time));
+      }
+
       setStep(3);
     } catch (err) {
       console.error('Error fetching available time slots:', err);
@@ -109,42 +112,39 @@ const Booking: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!selectedService || !selectedDate || !selectedTime) {
       setError("Informations de réservation incomplètes");
       return;
     }
-    
+
     setIsLoading(true);
     setError(null);
-    
+
     try {
-      // Check if the time slot is still available
-      const isAvailable = await bookingService.checkAvailability(selectedDate, selectedTime);
-      
+      // 1. Vérifier si le créneau est encore disponible
+      const isAvailable = await availableSlotsService.isSlotAvailable(selectedDate, selectedTime);
+
       if (!isAvailable) {
         setError("Ce créneau n'est plus disponible. Veuillez en choisir un autre.");
         setStep(3);
         setIsLoading(false);
         return;
       }
-      
-      // Create the booking in Firebase
+
+      // 2. Créer la réservation (mais sans tenter de modifier availableSlots)
       const newBookingId = await bookingService.createBooking({
         service: selectedService,
         date: selectedDate,
         time: selectedTime,
         ...formData
       });
-      
+
+      // 3. Ne pas essayer de mettre à jour directement availableSlots ici
+
       setBookingId(newBookingId);
       setIsSubmitted(true);
-      
-      // Send confirmation email
-      // Note: This would typically be handled by a Cloud Function in Firebase
-      // For now, we'll just log it
-      console.log(`Booking successful! Confirmation email would be sent to ${formData.email}`);
-      
+
     } catch (err) {
       setError("Une erreur est survenue lors de la réservation. Veuillez réessayer.");
       console.error(err);
@@ -154,10 +154,10 @@ const Booking: React.FC = () => {
   };
 
   const formatDate = (date: Date) => {
-    return date.toLocaleDateString('fr-FR', { 
-      weekday: 'long', 
-      day: 'numeric', 
-      month: 'long' 
+    return date.toLocaleDateString('fr-FR', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long'
     });
   };
 
@@ -182,32 +182,31 @@ const Booking: React.FC = () => {
 
       <div className="container mx-auto px-6 py-12">
         <h1 className="text-4xl font-bold text-center mb-8">Réservez votre séance</h1>
-        
+
         {/* Error Message */}
         {error && (
           <div className="max-w-3xl mx-auto mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded relative">
             <strong className="font-medium">Erreur: </strong><span>{error}</span>
           </div>
         )}
-        
+
         {!isSubmitted ? (
           <>
             {/* Progress Steps */}
             <div className="max-w-3xl mx-auto mb-12">
               <div className="flex justify-between">
                 {[1, 2, 3, 4].map((i) => (
-                  <div 
-                    key={i} 
+                  <div
+                    key={i}
                     className={`relative flex flex-col items-center ${i < step ? 'text-silver-600' : i === step ? 'text-silver-500' : 'text-gray-400'}`}
                   >
-                    <div 
-                      className={`w-10 h-10 rounded-full flex items-center justify-center border-2 ${
-                        i < step 
-                          ? 'bg-silver-500 border-silver-500 text-white' 
-                          : i === step 
-                            ? 'border-silver-500 text-silver-500' 
-                            : 'border-gray-300 text-gray-400'
-                      }`}
+                    <div
+                      className={`w-10 h-10 rounded-full flex items-center justify-center border-2 ${i < step
+                        ? 'bg-silver-500 border-silver-500 text-white'
+                        : i === step
+                          ? 'border-silver-500 text-silver-500'
+                          : 'border-gray-300 text-gray-400'
+                        }`}
                     >
                       {i < step ? <Check className="w-5 h-5" /> : i}
                     </div>
@@ -218,7 +217,7 @@ const Booking: React.FC = () => {
                       {i === 4 && 'Coordonnées'}
                     </div>
                     {i < 4 && (
-                      <div 
+                      <div
                         className={`absolute top-5 w-full h-0.5 left-1/2 ${i < step ? 'bg-silver-500' : 'bg-gray-300'}`}
                         style={{ width: 'calc(100% - 2.5rem)', left: '50%' }}
                       ></div>
@@ -267,7 +266,7 @@ const Booking: React.FC = () => {
             {step === 2 && (
               <div className="max-w-4xl mx-auto">
                 <div className="flex items-center justify-between mb-6">
-                  <button 
+                  <button
                     onClick={() => setStep(1)}
                     className="flex items-center text-silver-600 hover:text-silver-800"
                   >
@@ -277,7 +276,7 @@ const Booking: React.FC = () => {
                   <h2 className="text-2xl font-semibold text-center">Choisissez une date</h2>
                   <div className="w-24"></div> {/* Spacer for centering */}
                 </div>
-                
+
                 <div className="bg-white p-6 rounded-lg shadow-md">
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
                     {availableDates.map((date, index) => (
@@ -307,7 +306,7 @@ const Booking: React.FC = () => {
             {step === 3 && selectedDate && (
               <div className="max-w-4xl mx-auto">
                 <div className="flex items-center justify-between mb-6">
-                  <button 
+                  <button
                     onClick={() => setStep(2)}
                     className="flex items-center text-silver-600 hover:text-silver-800"
                   >
@@ -319,7 +318,7 @@ const Booking: React.FC = () => {
                   </h2>
                   <div className="w-24"></div> {/* Spacer for centering */}
                 </div>
-                
+
                 <div className="bg-white p-6 rounded-lg shadow-md">
                   {availableTimeSlots.length > 0 ? (
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
@@ -353,7 +352,7 @@ const Booking: React.FC = () => {
             {step === 4 && selectedDate && selectedTime && (
               <div className="max-w-2xl mx-auto">
                 <div className="flex items-center justify-between mb-6">
-                  <button 
+                  <button
                     onClick={() => setStep(3)}
                     className="flex items-center text-silver-600 hover:text-silver-800"
                   >
@@ -363,7 +362,7 @@ const Booking: React.FC = () => {
                   <h2 className="text-2xl font-semibold text-center">Vos coordonnées</h2>
                   <div className="w-24"></div> {/* Spacer for centering */}
                 </div>
-                
+
                 <div className="bg-white p-6 rounded-lg shadow-md">
                   <div className="mb-6 p-4 bg-gray-50 rounded-lg">
                     <h3 className="font-semibold mb-2">Récapitulatif de votre réservation</h3>
@@ -382,7 +381,7 @@ const Booking: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                  
+
                   <form onSubmit={handleSubmit}>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                       <div>
@@ -414,7 +413,7 @@ const Booking: React.FC = () => {
                         />
                       </div>
                     </div>
-                    
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                       <div>
                         <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-1">
@@ -445,7 +444,7 @@ const Booking: React.FC = () => {
                         />
                       </div>
                     </div>
-                    
+
                     <div className="mb-6">
                       <label htmlFor="message" className="block text-sm font-medium text-gray-700 mb-1">
                         Message (optionnel)
@@ -460,17 +459,17 @@ const Booking: React.FC = () => {
                         placeholder="Précisez vos besoins spécifiques ou toute information utile..."
                       ></textarea>
                     </div>
-                    
+
                     <button
                       type="submit"
                       disabled={isLoading}
                       className="w-full bg-silver-500 hover:bg-silver-600 text-white py-3 px-6 rounded-lg font-semibold transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
                     >
-                      {isLoading ? 
+                      {isLoading ?
                         <span className="flex items-center justify-center">
                           <Loader className="animate-spin w-5 h-5 mr-2" />
                           Traitement en cours...
-                        </span> 
+                        </span>
                         : 'Confirmer la réservation'
                       }
                     </button>
@@ -513,7 +512,7 @@ const Booking: React.FC = () => {
                 </p>
               )}
               <div className="flex flex-col sm:flex-row justify-center space-y-3 sm:space-y-0 sm:space-x-4">
-                <Link 
+                <Link
                   to="/"
                   className="inline-block bg-silver-500 hover:bg-silver-600 text-white py-3 px-6 rounded-lg font-semibold transition-colors"
                 >
@@ -537,22 +536,22 @@ const Booking: React.FC = () => {
           <h2 className="text-2xl font-semibold text-center mb-8">Besoin d'aide avec votre réservation ?</h2>
           <div className="max-w-lg mx-auto">
             <div className="flex flex-col md:flex-row space-y-4 md:space-y-0 md:space-x-4">
-              <a 
-                href="tel:+33600000000" 
+              <a
+                href="tel:+33600000000"
                 className="flex-1 flex items-center justify-center space-x-2 bg-white py-3 px-4 rounded-lg shadow-sm hover:shadow-md transition-shadow"
               >
                 <Phone className="w-5 h-5 text-silver-500" />
                 <span>Appeler</span>
               </a>
-              <a 
-                href="https://wa.me/33600000000" 
+              <a
+                href="https://wa.me/33600000000"
                 className="flex-1 flex items-center justify-center space-x-2 bg-white py-3 px-4 rounded-lg shadow-sm hover:shadow-md transition-shadow"
               >
                 <MessageCircle className="w-5 h-5 text-green-500" />
                 <span>WhatsApp</span>
               </a>
-              <a 
-                href="mailto:contact@coiffure-domicile.fr" 
+              <a
+                href="mailto:contact@coiffure-domicile.fr"
                 className="flex-1 flex items-center justify-center space-x-2 bg-white py-3 px-4 rounded-lg shadow-sm hover:shadow-md transition-shadow"
               >
                 <Mail className="w-5 h-5 text-gray-700" />

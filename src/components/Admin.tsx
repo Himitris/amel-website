@@ -20,9 +20,10 @@ import {
 import { bookingService, BookingData } from '../firebase/bookingService';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { collection, getDocs, query, Timestamp, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, Timestamp, where } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { emailService } from '../services/emailService';
+import AdminSlotsManager from './AdminSlotsManager';
 
 interface BookingWithId extends BookingData {
   id: string;
@@ -48,6 +49,21 @@ const Admin: React.FC = () => {
     // Initialisez EmailJS lors du chargement du composant
     emailService.init();
   }, []);
+
+  // Dans Admin.tsx
+  useEffect(() => {
+    if (currentUser) {
+      const checkAdminStatus = async () => {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+        } catch (error) {
+          console.error('Error checking admin status:', error);
+        }
+      };
+
+      checkAdminStatus();
+    }
+  }, [currentUser]);
 
   // Get bookings for the current month
   useEffect(() => {
@@ -92,13 +108,10 @@ const Admin: React.FC = () => {
     setError(null);
 
     try {
-      console.log('Fetching bookings for month:', currentDate.getMonth() + 1, currentDate.getFullYear());
 
       // Create a date range for the current month
       const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
       const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0, 23, 59, 59);
-
-      console.log('Date range:', startOfMonth.toISOString(), 'to', endOfMonth.toISOString());
 
       // Approach 1: Get all bookings at once instead of day by day
       // This requires a composite index on date
@@ -110,20 +123,17 @@ const Admin: React.FC = () => {
       );
 
       const querySnapshot = await getDocs(q);
-      console.log('Found', querySnapshot.docs.length, 'bookings');
 
       const monthBookings: BookingWithId[] = querySnapshot.docs.map(mapBookingData);
 
       // Suite du fichier Admin.tsx
 
-      console.log('Processed bookings:', monthBookings);
       setBookings(monthBookings);
     } catch (err) {
       console.error('Error fetching bookings:', err);
 
       // Fallback approach if the direct query fails
       try {
-        console.log('Using fallback approach...');
         const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
         const endOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
 
@@ -139,7 +149,6 @@ const Admin: React.FC = () => {
             return bookingDate >= startOfMonth && bookingDate <= endOfMonth;
           });
 
-        console.log('Fallback found', monthBookings.length, 'bookings');
         setBookings(monthBookings);
       } catch (fallbackErr) {
         console.error('Fallback approach failed:', fallbackErr);
@@ -267,7 +276,6 @@ const Admin: React.FC = () => {
   };
 
   const openDayDetails = (date: Date) => {
-    console.log("Opening day details for:", date.toISOString().split('T')[0]);
     const dayBookings = getBookingsForDay(date);
     const sortedBookings = sortBookingsByTime(dayBookings);
     setSelectedDayBookings(sortedBookings);
@@ -280,7 +288,6 @@ const Admin: React.FC = () => {
   };
 
   const openBookingDetails = (booking: BookingWithId) => {
-    console.log("Opening booking details for:", booking.id);
     setSelectedBooking(booking);
   };
 
@@ -324,8 +331,6 @@ const Admin: React.FC = () => {
   const getBookingsForDay = (date: Date) => {
     // S'assurer que la date est correctement traitée
     if (!date) return [];
-
-    console.log("Looking for bookings on date:", date.toISOString().split('T')[0]);
 
     return bookings.filter(booking => {
       if (!booking.date) return false;
@@ -929,6 +934,12 @@ const Admin: React.FC = () => {
             </div>
           ))}
         </div>
+
+        {/* Gestionnaire de créneaux */}
+        <div className="mt-12">
+          <AdminSlotsManager />
+        </div>
+
       </main>
     </div>
   );
