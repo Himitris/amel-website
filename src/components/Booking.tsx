@@ -459,7 +459,8 @@ const Booking: React.FC = () => {
                         placeholder="Précisez vos besoins spécifiques ou toute information utile..."
                       ></textarea>
                     </div>
-
+                    <h2 className="font-semibold mb-2 text-red-600">Attention !</h2>
+                    <h2 className="mb-2 text-red-600">Ce formulaire ne constitue pas une réel confirmation de rendez-vous. Vous recevrez un email et/ou un SMS pour confirmer votre réservation. </h2>
                     <button
                       type="submit"
                       disabled={isLoading}
